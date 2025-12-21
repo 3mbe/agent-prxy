@@ -1,4 +1,3 @@
-// Package config loads and validates configuration for agent-prxy.
 package config
 
 import (
