@@ -29,25 +29,37 @@ func run() error {
 
 	srv := httpapi.NewServer(cfg.ListenAddr)
 
+	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("http server listening on %s", cfg.ListenAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server error: %v", err)
-		}
+		errCh <- srv.ListenAndServe()
 	}()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-	log.Printf("received signal %s, shutting down", sig)
+	defer signal.Stop(sigCh)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	select {
+	case sig := <-sigCh:
+		log.Printf("received signal %s, shutting down", sig)
 
-	if err := srv.Shutdown(ctx); err != nil {
-		return fmt.Errorf("graceful shutdown error: %w", err)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			return fmt.Errorf("graceful shutdown error: %w", err)
+		}
+
+		if err := <-errCh; err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("http server error: %w", err)
+		}
+
+		return nil
+
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("http server error: %w", err)
+		}
+		return nil
 	}
-
-	log.Printf("server shut down cleanly")
-	return nil
 }
